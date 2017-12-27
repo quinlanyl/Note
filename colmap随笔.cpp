@@ -244,7 +244,7 @@ class Bitmap {
   // 将内存中的一个bit 位原始缓冲块转换为一个FIBITMAP
 // ( 首先储存最左上方像素)
   std::vector<uint8_t> ConvertToRowMajorArray() const;//将位图的每个像素的行数据形式保存到一个数组里
-  std::vector<uint8_t> ConvertToColMajorArray() const;//将位图的每个像素的行数据形式保存到一个数组里
+  std::vector<uint8_t> ConvertToColMajorArray() const;//先从b通道读取所有像素的b值，g。b
 
   // Manipulate individual pixels. For grayscale images, only the red element
   // of the RGB color is used.
@@ -328,73 +328,236 @@ class JetColormap {
   static float Base(const float val);
 };
 
+
+
+ }
+ #include "cache.h"
+ {
+template <typename key_t, typename value_t>
+class LRUCache {
+ public:
+  LRUCache(const size_t max_num_elems,
+           const std::function<value_t(const key_t&)>& getter_func);
+
+  // The number of elements in the cache.
+  size_t NumElems() const;
+  size_t MaxNumElems() const;
+
+  // Check whether the element with the given key exists.
+  bool Exists(const key_t& key) const;
+
+  // Get the value of an element either from the cache or compute the new value.
+  const value_t& Get(const key_t& key);
+  value_t& GetMutable(const key_t& key);
+
+  // Manually set the value of an element. Note that the ownership of the value
+  // is moved to the cache, which invalidates the object on the caller side.
+  virtual void Set(const key_t& key, value_t&& value);
+
+  // Pop least recently used element from cache.
+  virtual void Pop();
+
+  // Clear all elements from cache.
+  virtual void Clear();
+
+ protected:
+  typedef typename std::pair<key_t, value_t> key_value_pair_t;
+  typedef typename std::list<key_value_pair_t>::iterator list_iterator_t;
+
+  // Maximum number of least-recently-used elements the cache remembers.
+  const size_t max_num_elems_;
+
+  // List to keep track of the least-recently-used elements.
+  std::list<key_value_pair_t> elems_list_;
+
+  // Mapping from key to location in the list.
+  std::unordered_map<key_t, list_iterator_t> elems_map_;
+
+  // Function to compute new values if not in the cache.
+  const std::function<value_t(const key_t&)> getter_func_;
+};
+
+// Least Recently Used cache implementation that is constrained by a maximum
+// memory limitation of its elements. Whenever the memory limit is exceeded, the
+// least recently used (by Get and GetMutable) is deleted. Each element must
+// implement a `size_t NumBytes()` method that returns its size in memory.
+template <typename key_t, typename value_t>
+class MemoryConstrainedLRUCache : public LRUCache<key_t, value_t> {
+ public:
+  MemoryConstrainedLRUCache(
+      const size_t max_num_bytes,
+      const std::function<value_t(const key_t&)>& getter_func);
+
+  size_t NumBytes() const;
+  size_t MaxNumBytes() const;
+  void UpdateNumBytes(const key_t& key);
+
+  void Set(const key_t& key, value_t&& value) override;
+  void Pop() override;
+  void Clear() override;
+
+ private:
+  using typename LRUCache<key_t, value_t>::key_value_pair_t;
+  using typename LRUCache<key_t, value_t>::list_iterator_t;
+  using LRUCache<key_t, value_t>::max_num_elems_;
+  using LRUCache<key_t, value_t>::elems_list_;
+  using LRUCache<key_t, value_t>::elems_map_;
+  using LRUCache<key_t, value_t>::getter_func_;
+
+  const size_t max_num_bytes_;
+  size_t num_bytes_;
+  std::unordered_map<key_t, size_t> elems_num_bytes_;
+};
+
 ////////////////////////////////////////////////////////////////////////////////
 // Implementation
 ////////////////////////////////////////////////////////////////////////////////
 
-namespace internal {
-
-template <typename T1, typename T2>
-T2 BitmapColorCast(const T1 value) {
-  return std::min(static_cast<T1>(std::numeric_limits<T2>::max()),
-                  std::max(static_cast<T1>(std::numeric_limits<T2>::min()),
-                           std::round(value)));
+template <typename key_t, typename value_t>
+//getter_func为lamber表达式，用来查找键值，如果没有的话，则新增键值对
+LRUCache<key_t, value_t>::LRUCache(
+    const size_t max_num_elems,
+    const std::function<value_t(const key_t&)>& getter_func)
+    : max_num_elems_(max_num_elems), getter_func_(getter_func) {
+  CHECK(getter_func);
+  CHECK_GT(max_num_elems, 0);
 }
 
-}  // namespace internal
-
-template <typename T>
-BitmapColor<T>::BitmapColor() : r(0), g(0), b(0) {}
-
-template <typename T>
-BitmapColor<T>::BitmapColor(const T r, const T g, const T b)
-    : r(r), g(g), b(b) {}
-
-template <typename T>
-template <typename D>
-BitmapColor<D> BitmapColor<T>::Cast() const {
-  BitmapColor<D> color;
-  color.r = internal::BitmapColorCast<T, D>(r);
-  color.g = internal::BitmapColorCast<T, D>(g);
-  color.b = internal::BitmapColorCast<T, D>(b);
-  return color;
+template <typename key_t, typename value_t>
+size_t LRUCache<key_t, value_t>::NumElems() const {
+  return elems_map_.size();//返回数量
 }
 
-template <typename T>
-bool BitmapColor<T>::operator==(const BitmapColor<T>& rhs) const {
-  return r == rhs.r && g == rhs.g && b == rhs.b;
+template <typename key_t, typename value_t>
+size_t LRUCache<key_t, value_t>::MaxNumElems() const {
+  return max_num_elems_;//缓存中最大存储的数目
 }
 
-template <typename T>
-bool BitmapColor<T>::operator!=(const BitmapColor<T>& rhs) const {
-  return r != rhs.r || g != rhs.g || b != rhs.b;
+template <typename key_t, typename value_t>
+bool LRUCache<key_t, value_t>::Exists(const key_t& key) const {
+  return elems_map_.find(key) != elems_map_.end();//判断是否存在该键值
 }
 
-template <typename T>
-std::ostream& operator<<(std::ostream& output, const BitmapColor<T>& color) {
-  output << StringPrintf("RGB(%f, %f, %f)", static_cast<double>(color.r),
-                         static_cast<double>(color.g),
-                         static_cast<double>(color.b));
-  return output;
+template <typename key_t, typename value_t>
+const value_t& LRUCache<key_t, value_t>::Get(const key_t& key) {
+  return GetMutable(key);//获取键值，没有则新建
 }
 
-FIBITMAP* Bitmap::Data() { return data_.get(); }
-const FIBITMAP* Bitmap::Data() const { return data_.get(); }
-
-int Bitmap::Width() const { return width_; }
-int Bitmap::Height() const { return height_; }
-int Bitmap::Channels() const { return channels_; }
-
-unsigned int Bitmap::BitsPerPixel() const {
-  return FreeImage_GetBPP(data_.get());
+template <typename key_t, typename value_t>
+value_t& LRUCache<key_t, value_t>::GetMutable(const key_t& key) {
+  const auto it = elems_map_.find(key);
+  if (it == elems_map_.end()) {
+    Set(key, std::move(getter_func_(key)));
+    return elems_map_[key]->second;
+  } else {
+    elems_list_.splice(elems_list_.begin(), elems_list_, it->second);//将elems_list_中的第it->second位插到起始位置
+    return it->second->second;
+  }
 }
 
-unsigned int Bitmap::ScanWidth() const {
-  return FreeImage_GetPitch(data_.get());
+template <typename key_t, typename value_t>//设置值
+void LRUCache<key_t, value_t>::Set(const key_t& key, value_t&& value) {
+  auto it = elems_map_.find(key);
+  elems_list_.push_front(key_value_pair_t(key, std::move(value)));
+  if (it != elems_map_.end()) {
+    elems_list_.erase(it->second);
+    elems_map_.erase(it);
+  }
+  elems_map_[key] = elems_list_.begin();
+  if (elems_map_.size() > max_num_elems_) {
+    Pop();
+  }
 }
 
-bool Bitmap::IsRGB() const { return channels_ == 3; }
+template <typename key_t, typename value_t>//弹出最后压入得值
+void LRUCache<key_t, value_t>::Pop() {
+  if (!elems_list_.empty()) {
+    auto last = elems_list_.end();
+    --last;
+    elems_map_.erase(last->first);
+    elems_list_.pop_back();
+  }
+}
 
-bool Bitmap::IsGrey() const { return channels_ == 1; } 
+template <typename key_t, typename value_t>//清除所有
+void LRUCache<key_t, value_t>::Clear() {
+  elems_list_.clear();
+  elems_map_.clear();
+}
+
+template <typename key_t, typename value_t>
+MemoryConstrainedLRUCache<key_t, value_t>::MemoryConstrainedLRUCache(
+    const size_t max_num_bytes,
+    const std::function<value_t(const key_t&)>& getter_func)
+    : LRUCache<key_t, value_t>(std::numeric_limits<size_t>::max(), getter_func),
+      max_num_bytes_(max_num_bytes),
+      num_bytes_(0) {
+  CHECK_GT(max_num_bytes, 0);
+}
+
+template <typename key_t, typename value_t>
+size_t MemoryConstrainedLRUCache<key_t, value_t>::NumBytes() const {
+  return num_bytes_;
+}
+
+template <typename key_t, typename value_t>
+size_t MemoryConstrainedLRUCache<key_t, value_t>::MaxNumBytes() const {
+  return max_num_bytes_;
+}
+
+template <typename key_t, typename value_t>
+void MemoryConstrainedLRUCache<key_t, value_t>::Set(const key_t& key,
+                                                    value_t&& value) {
+  auto it = elems_map_.find(key);
+  elems_list_.push_front(key_value_pair_t(key, std::move(value)));
+  if (it != elems_map_.end()) {
+    elems_list_.erase(it->second);
+    elems_map_.erase(it);
+  }
+  elems_map_[key] = elems_list_.begin();
+
+  const size_t num_bytes = value.NumBytes();
+  num_bytes_ += num_bytes;
+  elems_num_bytes_.emplace(key, num_bytes);
+
+  while (num_bytes_ > max_num_bytes_ && elems_map_.size() > 1) {
+    Pop();
+  }
+}
+
+template <typename key_t, typename value_t>
+void MemoryConstrainedLRUCache<key_t, value_t>::Pop() {
+  if (!elems_list_.empty()) {
+    auto last = elems_list_.end();
+    --last;
+    num_bytes_ -= elems_num_bytes_.at(last->first);
+    CHECK_GE(num_bytes_, 0);
+    elems_num_bytes_.erase(last->first);
+    elems_map_.erase(last->first);
+    elems_list_.pop_back();
+  }
+}
+
+template <typename key_t, typename value_t>
+void MemoryConstrainedLRUCache<key_t, value_t>::UpdateNumBytes(
+    const key_t& key) {
+  auto& num_bytes = elems_num_bytes_.at(key);
+  num_bytes_ -= num_bytes;
+  CHECK_GE(num_bytes_, 0);
+  num_bytes = LRUCache<key_t, value_t>::Get(key).NumBytes();
+  num_bytes_ += num_bytes;
+
+  while (num_bytes_ > max_num_bytes_ && elems_map_.size() > 1) {
+    Pop();
+  }
+}
+
+template <typename key_t, typename value_t>
+void MemoryConstrainedLRUCache<key_t, value_t>::Clear() {
+  LRUCache<key_t, value_t>::Clear();
+  num_bytes_ = 0;
+  elems_num_bytes_.clear();
+}
+
  }
  
