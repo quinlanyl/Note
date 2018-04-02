@@ -80,3 +80,92 @@ bool ExtractSiftFeaturesCPU(const SiftExtractionOptions& options,
           ScaleKeypoints(image_data.bitmap, image_data.camera,
                          &image_data.keypoints);
 
+
+
+
+
+
+
+
+
+//特征匹配
+RunFeatureMatching()
+//预处理并将图片以键值对的形式传入到Match（）函数，image_t的数据类型是unint类型，
+void SiftFeatureMatcher::Match(const std::vector<std::pair<image_t, image_t>>& image_pairs)//#include "matching.cc"
+{
+//检查数据库是否已存在匹配数据
+const bool exists_matches =
+        cache_->ExistsMatches(image_pair.first, image_pair.second);
+const bool exists_inlier_matches =
+        cache_->ExistsInlierMatches(image_pair.first, image_pair.second);
+/*
+如果只存在其中一个匹配或内部匹配项，我们将从头开始重新计算它们并删除现有结果。 
+这必须在将作业推送到队列之前完成，否则在将现有结果写入数据库时，数据库约束可能会失败。
+*/
+ if (exists_inlier_matches) {
+      cache_->DeleteInlierMatches(image_pair.first, image_pair.second);
+    }
+
+    internal::FeatureMatcherData data;//定义数据匹配变量
+    data.image_id1 = image_pair.first;
+    data.image_id2 = image_pair.second;
+
+    if (exists_matches) {
+      data.matches = cache_->GetMatches(image_pair.first, image_pair.second);
+      cache_->DeleteMatches(image_pair.first, image_pair.second);
+      CHECK(verifier_queue_.Push(data));
+    } else {
+      CHECK(matcher_queue_.Push(data));//将数据加到队列
+    }
+
+ for (size_t i = 0; i < num_outputs; ++i) {
+    const auto output_job = output_queue_.Pop();//已经处理完匹配数据，不知道具体匹配函数在哪执行的，涉及到多线程
+    CHECK(output_job.IsValid());
+    auto output = output_job.Data();
+
+    if (output.matches.size() < static_cast<size_t>(options_.min_num_inliers)) {
+      output.matches = {};
+    }
+
+    if (output.two_view_geometry.inlier_matches.size() <
+        static_cast<size_t>(options_.min_num_inliers)) {
+      output.two_view_geometry = TwoViewGeometry();
+    }
+
+    cache_->WriteMatches(output.image_id1, output.image_id2, output.matches);
+    cache_->WriteInlierMatches(output.image_id1, output.image_id2,
+                               output.two_view_geometry);
+  }
+
+  CHECK_EQ(output_queue_.Size(), 0);
+}
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
