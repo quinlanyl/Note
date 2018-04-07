@@ -208,7 +208,7 @@ Eigen::MatrixXi ComputeSiftDistanceMatrix(
         dists(i1, i2) = 0;
       } else {
         dists(i1, i2) = descriptors1_int.row(i1).dot(descriptors2_int.row(i2));//dists是一个以图1特征描述符的行数为行，以图2特征描述符的行数为列的数组
-      }//行向量点乘有什么意义，返回的值是点与点的距离吗？
+      }//行向量点乘有什么意义，返回的值是点与点的距离吗？  特征点的欧式距离是点乘吗？。。。这里应该用的是求向量夹角来代替欧式距离，但是并没有除以向量的模长，所以要归一化
     }
   }
 
@@ -223,22 +223,22 @@ void FindBestMatches(const Eigen::MatrixXi& dists, const float max_ratio,
   std::vector<int> matches12;
   const size_t num_matches12 =
       FindBestMatchesOneWay(dists, max_ratio, max_distance, &matches12);
-
+  //交叉检测
   if (cross_check) {
     std::vector<int> matches21;
     const size_t num_matches21 = FindBestMatchesOneWay(
         dists.transpose(), max_ratio, max_distance, &matches21);
     matches->reserve(std::min(num_matches12, num_matches21));
-    for (size_t i1 = 0; i1 < matches12.size(); ++i1) {
+    for (size_t i1 = 0; i1 < matches12.size(); ++i1) {//最好的匹配
       if (matches12[i1] != -1 && matches21[matches12[i1]] != -1 &&
           matches21[matches12[i1]] == static_cast<int>(i1)) {
         FeatureMatch match;
         match.point2D_idx1 = i1;
         match.point2D_idx2 = matches12[i1];
-        matches->push_back(match);
+        matches->push_back(match);//具有稳定性的匹配点
       }
     }
-  } else {
+  } else {//否则以第一次检测为标准，压入容器存储
     matches->reserve(num_matches12);
     for (size_t i1 = 0; i1 < matches12.size(); ++i1) {
       if (matches12[i1] != -1) {
@@ -255,11 +255,11 @@ size_t FindBestMatchesOneWay(const Eigen::MatrixXi& dists,
                              const float max_ratio, const float max_distance,
                              std::vector<int>* matches) {
   // SIFT descriptor vectors are normalized to length 512.
-  const float kDistNorm = 1.0f / (512.0f * 512.0f);
+  const float kDistNorm = 1.0f / (512.0f * 512.0f);//归一化，不然夹角值不好求
 
   size_t num_matches = 0;
   matches->resize(dists.rows(), -1);
-
+//对所有点逐一匹配，找到最近距离和次近距离
   for (Eigen::MatrixXi::Index i1 = 0; i1 < dists.rows(); ++i1) {
     int best_i2 = -1;
     int best_dist = 0;
@@ -268,7 +268,7 @@ size_t FindBestMatchesOneWay(const Eigen::MatrixXi& dists,
       const int dist = dists(i1, i2);
       if (dist > best_dist) {
         best_i2 = i2;
-        second_best_dist = best_dist;
+        second_best_dist = best_dist;//最佳距离找到的怎么是最大距离。不懂
         best_dist = dist;
       } else if (dist > second_best_dist) {
         second_best_dist = dist;
@@ -291,8 +291,7 @@ size_t FindBestMatchesOneWay(const Eigen::MatrixXi& dists,
     const float second_best_dist_normed =
         std::acos(std::min(kDistNorm * second_best_dist, 1.0f));
 
-    // Check if match passes ratio test. Keep this comparison >= in order to
-    // ensure that the case of best == second_best is detected.
+ //如果最佳距离 比上 次佳距离 大于max_ratio(通常设为0.8) 则忽略
     if (best_dist_normed >= max_ratio * second_best_dist_normed) {
       continue;
     }
