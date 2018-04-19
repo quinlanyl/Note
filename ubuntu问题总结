@@ -1,0 +1,16 @@
+终端快捷命令，打不开终端。。
+注意 python3 的python3.5 和python3.6共存，优先3.6时 ，容易出现各种问题，如 apt-dkg..找不到之类的
+不明白这些命令依赖的是python3 ,怎么切换python2呢？
+
+
+Ubuntu16.04安装pcl，方法是直接执行
+
+sudo apt-get install libpcl-dev pcl-tools
+
+
+
+automatic_reconstructor    --workspace_path /home/quinlan/Learn/source/    --image_path /home/quinlan/Learn/source/images  --use_gpu 0
+
+git remote add origin https://github.com/miaoihan/weibo.git  
+$git fetch origin    //获取远程更新
+$git merge origin/master //把更新的内容合并到本地分支
