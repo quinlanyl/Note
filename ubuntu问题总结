@@ -5,7 +5,7 @@
 
 Ubuntu16.04安装pcl，方法是直接执行
 于高博视觉slam十四讲第5讲中PCL编译的问题
-终端加上sudo apt-get install libproj-dev ,再加上高博视频课中所讲的在CMakeList.txt中修正的一个链接错误list (REMOVE_ITEM PCL_LIBRARIES "vtkproj4")，成功的解决了问题
+终端加上sudo apt-get install libproj-dev ,即在add_executable语句前面加上list(REMOVE_ITEM PCL_LIBRARIES "vtkproj4")。
 
 sudo apt-get install libpcl-dev pcl-tools
 
